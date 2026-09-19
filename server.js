@@ -3,7 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const PORT = 8787;
+const PORT = process.env.PORT || 8787;
 const DIR = __dirname;
 
 const MIME = {
@@ -124,7 +124,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  ✈️  METAR Rüzgar Tahmin Sistemi`);
   console.log(`  ─────────────────────────────`);
   console.log(`  🌐 http://localhost:${PORT}`);

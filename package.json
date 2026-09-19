@@ -1,0 +1,21 @@
+{
+  "name": "metar-wind-forecast",
+  "version": "1.0.0",
+  "description": "72 saatlik METAR verilerine dayalı havacılık rüzgar tahmini ve pist görselleştirme sistemi",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "aviation",
+    "metar",
+    "wind",
+    "forecast",
+    "runway",
+    "crosswind",
+    "headwind",
+    "pilot"
+  ],
+  "author": "",
+  "license": "MIT"
+}

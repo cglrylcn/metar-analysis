@@ -1,0 +1,1695 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>METAR Rüzgar Tahmini</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --surface: #1e293b;
+    --surface2: #334155;
+    --accent: #38bdf8;
+    --accent2: #818cf8;
+    --text: #f1f5f9;
+    --text2: #94a3b8;
+    --green: #4ade80;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --orange: #fb923c;
+    --radius: 12px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  header { text-align: center; padding: 30px 0 20px; }
+  header h1 {
+    font-size: 1.8rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-bottom: 6px;
+  }
+  header p { color: var(--text2); font-size: 0.9rem; }
+  .input-card {
+    background: var(--surface); border-radius: var(--radius);
+    padding: 24px; margin-bottom: 20px; border: 1px solid var(--surface2);
+  }
+  .input-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+  .input-group { flex: 1; min-width: 150px; }
+  .input-group label {
+    display: block; font-size: 0.75rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--text2); margin-bottom: 6px;
+  }
+  .input-group input {
+    width: 100%; padding: 12px 16px; background: var(--bg);
+    border: 1px solid var(--surface2); border-radius: 8px;
+    color: var(--text); font-size: 1rem; font-weight: 600;
+    text-transform: uppercase; transition: border-color 0.2s;
+  }
+  .input-group input:focus { outline: none; border-color: var(--accent); }
+  .input-group input::placeholder { text-transform: none; font-weight: 400; color: var(--surface2); }
+  button.primary {
+    padding: 12px 32px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; border-radius: 8px; color: #fff;
+    font-size: 1rem; font-weight: 600; cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s; white-space: nowrap;
+  }
+  button.primary:hover { opacity: 0.9; }
+  button.primary:active { transform: scale(0.97); }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .loading { text-align: center; padding: 40px; color: var(--text2); }
+  .loading .spinner {
+    display: inline-block; width: 32px; height: 32px;
+    border: 3px solid var(--surface2); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-msg {
+    background: rgba(248,113,113,0.1); border: 1px solid var(--red);
+    color: var(--red); padding: 12px 16px; border-radius: 8px;
+    margin-top: 12px; font-size: 0.9rem;
+  }
+  .results { display: none; }
+  .card {
+    background: var(--surface); border-radius: var(--radius);
+    padding: 20px; margin-bottom: 16px; border: 1px solid var(--surface2);
+  }
+  .card h2 {
+    font-size: 1rem; font-weight: 600; color: var(--accent);
+    margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .forecast-box {
+    background: linear-gradient(135deg, rgba(56,189,248,0.08), rgba(129,140,248,0.08));
+    border: 1px solid rgba(56,189,248,0.3);
+    border-radius: var(--radius); padding: 24px; margin-bottom: 16px;
+  }
+  .forecast-box h2 { font-size: 1.1rem; color: var(--accent); margin-bottom: 16px; }
+  .forecast-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 16px; margin-bottom: 16px;
+  }
+  .forecast-item { text-align: center; }
+  .forecast-item .label {
+    font-size: 0.7rem; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text2); margin-bottom: 4px;
+  }
+  .forecast-item .value { font-size: 1.5rem; font-weight: 700; }
+  .forecast-item .unit { font-size: 0.8rem; color: var(--text2); font-weight: 400; }
+  .confidence {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; background: var(--bg); border-radius: 8px; margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .confidence-bar {
+    flex: 1; min-width: 100px; height: 6px;
+    background: var(--surface2); border-radius: 3px; overflow: hidden;
+  }
+  .confidence-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+  .commentary {
+    padding: 14px; background: var(--bg); border-radius: 8px;
+    font-size: 0.9rem; line-height: 1.6; color: var(--text2);
+    border-left: 3px solid var(--accent);
+  }
+  .commentary strong { color: var(--text); }
+  .metar-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  .metar-table th {
+    text-align: left; padding: 8px 10px; color: var(--text2);
+    font-weight: 600; text-transform: uppercase; font-size: 0.7rem;
+    letter-spacing: 0.04em; border-bottom: 1px solid var(--surface2);
+    position: sticky; top: 0; background: var(--surface);
+  }
+  .metar-table td { padding: 6px 10px; border-bottom: 1px solid rgba(51,65,85,0.5); color: var(--text2); }
+  .metar-table tr:hover td { background: rgba(56,189,248,0.05); }
+  .metar-table .highlight td { background: rgba(56,189,248,0.1); color: var(--text); }
+  .table-scroll { max-height: 400px; overflow-y: auto; border-radius: 8px; }
+  .table-scroll::-webkit-scrollbar { width: 6px; }
+  .table-scroll::-webkit-scrollbar-track { background: var(--bg); }
+  .table-scroll::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 3px; }
+  .chart-container { padding: 10px 0; }
+  canvas { width: 100% !important; }
+  .taf-raw {
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.85rem;
+    background: var(--bg); padding: 14px; border-radius: 8px;
+    line-height: 1.6; white-space: pre-wrap; color: var(--green);
+  }
+  .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 0.7rem; font-weight: 600;
+  }
+  .tag-calm { background: rgba(74,222,128,0.15); color: var(--green); }
+  .tag-light { background: rgba(56,189,248,0.15); color: var(--accent); }
+  .tag-moderate { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .tag-strong { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .tag-severe { background: rgba(248,113,113,0.15); color: var(--red); }
+  .stat-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;
+  }
+  .stat-box {
+    background: var(--bg); padding: 14px; border-radius: 8px; text-align: center;
+  }
+  .stat-box .stat-label {
+    font-size: 0.7rem; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text2); margin-bottom: 4px;
+  }
+  .stat-box .stat-value { font-size: 1.3rem; font-weight: 700; color: var(--text); }
+  .stat-box .stat-unit { font-size: 0.75rem; color: var(--text2); }
+  .day-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 4px;
+    font-size: 0.65rem; font-weight: 600; margin-right: 4px;
+  }
+  .day-0 { background: rgba(56,189,248,0.2); color: var(--accent); }
+  .day-1 { background: rgba(129,140,248,0.2); color: var(--accent2); }
+  .day-2 { background: rgba(251,191,36,0.2); color: var(--yellow); }
+  .day-3 { background: rgba(251,146,60,0.2); color: var(--orange); }
+  footer {
+    text-align: center; padding: 30px 0; color: var(--surface2); font-size: 0.75rem;
+  }
+  /* Runway visualization styles */
+  .runway-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .runway-header h2 { margin-bottom: 0 !important; }
+  .runway-toggle {
+    display: flex;
+    background: var(--bg);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid var(--surface2);
+    gap: 4px;
+  }
+  .toggle-btn {
+    background: transparent;
+    border: none;
+    color: var(--text2);
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+  }
+  .toggle-btn.active {
+    background: var(--accent);
+    color: #0f172a;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .runway-container {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 24px;
+    align-items: start;
+    margin-bottom: 16px;
+  }
+  .runway-visual-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .canvas-wrap {
+    position: relative;
+    width: 340px;
+    height: 340px;
+    background: #070d19;
+    border-radius: 50%;
+    border: 2px solid var(--surface2);
+    box-shadow: inset 0 0 35px rgba(0,0,0,0.7), 0 4px 20px rgba(0,0,0,0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #runwayCanvas {
+    width: 340px;
+    height: 340px;
+    display: block;
+    border-radius: 50%;
+  }
+  .wind-info-pill {
+    margin-top: 12px;
+    padding: 8px 16px;
+    background: var(--bg);
+    border: 1px solid var(--surface2);
+    border-radius: 20px;
+    font-size: 0.85rem;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+  }
+  .runway-details-col {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .rwy-card {
+    background: var(--bg);
+    border: 1px solid var(--surface2);
+    border-radius: 10px;
+    padding: 14px 16px;
+    transition: all 0.2s ease;
+  }
+  .rwy-card.recommended {
+    border-color: #10b981;
+    background: linear-gradient(135deg, rgba(16,185,129,0.08), rgba(6,78,59,0.06));
+    box-shadow: 0 0 16px rgba(16,185,129,0.15);
+  }
+  .rwy-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(51,65,85,0.4);
+  }
+  .rwy-ident-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .rwy-badge {
+    font-size: 1.15rem;
+    font-weight: 800;
+    padding: 3px 12px;
+    background: var(--surface2);
+    color: var(--text);
+    border-radius: 6px;
+    letter-spacing: 0.05em;
+  }
+  .rwy-card.recommended .rwy-badge {
+    background: #10b981;
+    color: #0f172a;
+  }
+  .rwy-hdg {
+    font-size: 0.85rem;
+    color: var(--text2);
+    font-weight: 500;
+  }
+  .rwy-status-tag {
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 20px;
+  }
+  .tag-rec {
+    background: rgba(16,185,129,0.2);
+    color: #34d399;
+    border: 1px solid rgba(16,185,129,0.4);
+  }
+  .tag-warning {
+    background: rgba(248,113,113,0.15);
+    color: var(--red);
+    border: 1px solid rgba(248,113,113,0.3);
+  }
+  .tag-info {
+    background: rgba(56,189,248,0.15);
+    color: var(--accent);
+    border: 1px solid rgba(56,189,248,0.3);
+  }
+  .rwy-meta {
+    font-size: 0.75rem;
+    color: var(--text2);
+    margin-bottom: 10px;
+  }
+  .rwy-components-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .rwy-comp-box {
+    background: var(--surface);
+    padding: 8px 12px;
+    border-radius: 8px;
+    text-align: center;
+  }
+  .rwy-comp-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text2);
+    margin-bottom: 2px;
+  }
+  .rwy-comp-val {
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+  .rwy-comp-sub {
+    font-size: 0.7rem;
+    color: var(--text2);
+  }
+  .runway-notes {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text2);
+    background: var(--bg);
+    padding: 10px 14px;
+    border-radius: 8px;
+    border-left: 3px solid var(--accent);
+  }
+  /* Chart tooltip */
+  .chart-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: rgba(15, 23, 42, 0.96);
+    backdrop-filter: blur(12px);
+    border: 1.5px solid var(--accent);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.75), 0 0 20px rgba(56, 189, 248, 0.25);
+    border-radius: 10px;
+    padding: 12px 16px;
+    color: var(--text);
+    z-index: 30;
+    transition: opacity 0.12s ease, transform 0.08s ease-out;
+    transform: translate(-50%, -125%);
+    white-space: nowrap;
+    min-width: 190px;
+  }
+  .chart-tooltip::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%) rotate(45deg);
+    width: 10px;
+    height: 10px;
+    background: rgba(15, 23, 42, 0.96);
+    border-right: 1.5px solid var(--accent);
+    border-bottom: 1.5px solid var(--accent);
+  }
+  .chart-tooltip-time {
+    font-size: 0.75rem;
+    color: var(--text2);
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+    padding-bottom: 4px;
+    font-weight: 600;
+  }
+  .chart-tooltip-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    align-items: center;
+  }
+  .chart-tooltip-val-large {
+    font-size: 1.6rem;
+    font-weight: 800;
+    line-height: 1.1;
+  }
+  .chart-tooltip-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text2);
+    margin-bottom: 2px;
+  }
+  .chart-tooltip-sub {
+    font-size: 0.72rem;
+    color: var(--text2);
+  }
+  .chart-tooltip-dir {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: #38bdf8;
+  }
+  .chart-tooltip-arrow {
+    display: inline-block;
+    font-size: 1.4rem;
+    line-height: 1;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>✈️ METAR Rüzgar Tahmin Sistemi</h1>
+    <p>72 saatlik METAR verilerine dayalı rüzgar analizi ve tahmini</p>
+  </header>
+  <div class="input-card">
+    <div class="input-row">
+      <div class="input-group">
+        <label>Havalimanı Kodu (ICAO)</label>
+        <input type="text" id="airportInput" placeholder="Örn: LTFM, LTBA, LTCP" maxlength="4" autofocus>
+      </div>
+      <div class="input-group">
+        <label>Tahmin Saati (UTC)</label>
+        <input type="time" id="timeInput" value="06:55">
+      </div>
+      <button class="primary" id="analyzeBtn" onclick="analyze()">Analiz Et</button>
+    </div>
+    <div id="errorBox"></div>
+  </div>
+  <div id="loadingBox" class="loading" style="display:none">
+    <div class="spinner"></div>
+    <div>METAR verileri çekiliyor ve analiz ediliyor...</div>
+  </div>
+  <div id="results" class="results">
+    <div class="card" id="lastMetarCard"></div>
+    <div class="card" id="tafCard" style="display:none"></div>
+    <div class="forecast-box" id="forecastCard"></div>
+    <div class="card" id="commentaryCard"></div>
+    <div class="card" id="runwayCard" style="display:none">
+      <div class="runway-header">
+        <h2>🛬 Pist Görselleştirmesi & Rüzgar Bileşenleri</h2>
+        <div class="runway-toggle">
+          <button class="toggle-btn active" id="btnRunwayForecast" onclick="switchRunwayWindMode('forecast')">🎯 Tahmin Rüzgarı</button>
+          <button class="toggle-btn" id="btnRunwayMetar" onclick="switchRunwayWindMode('metar')">📡 Son METAR</button>
+        </div>
+      </div>
+      <div class="runway-container">
+        <div class="runway-visual-col">
+          <div class="canvas-wrap">
+            <canvas id="runwayCanvas" width="340" height="340"></canvas>
+          </div>
+          <div class="wind-info-pill" id="runwayWindPill"></div>
+        </div>
+        <div class="runway-details-col" id="runwayDetailsCol">
+          <div id="runwayList"></div>
+        </div>
+      </div>
+      <div class="runway-notes">
+        💡 <strong>Karşı Rüzgar (Headwind):</strong> İniş ve kalkış için tercih edilir, yer hızını düşürür. <strong>Arka Rüzgar (Tailwind):</strong> İniş mesafesini uzatır, genelde maks 10-15 kt limitlidir. <strong>Yan Rüzgar (Crosswind):</strong> Uçak limitlerine (genelde 20-35 kt) göre kontrol edilmelidir.
+      </div>
+    </div>
+    <div class="card" id="chartCard">
+      <h2>📊 Saatlik Rüzgar Hızı Trendi (72 Saat)</h2>
+      <div class="chart-container" style="position: relative;">
+        <canvas id="windChart" height="280"></canvas>
+        <div id="chartTooltip" class="chart-tooltip" style="display:none"></div>
+      </div>
+    </div>
+    <div class="card" id="statsCard"></div>
+    <div class="card">
+      <h2>📡 Ham METAR Verileri (Son 72 Saat)</h2>
+      <div class="table-scroll" id="metarTableContainer"></div>
+    </div>
+  </div>
+  <footer>
+    Veri kaynağı: Aviation Weather Center (aviationweather.gov) · Tahminler bilgilendirme amaçlıdır, resmi uçuş planlaması için güncel TAF/METAR kullanın.
+  </footer>
+</div>
+
+<script>
+async function fetchMetar(airport) {
+  const resp = await fetch(`/api/metar?ids=${airport}&format=raw&hours=72&taf=true`);
+  if (!resp.ok) throw new Error(`API hatası: ${resp.status}`);
+  const text = await resp.text();
+  if (!text.trim()) throw new Error(`"${airport}" kodu için veri bulunamadı. ICAO kodunu kontrol edin.`);
+  return text;
+}
+
+// ── METAR Wind Parser ──
+function parseMetarWind(metar) {
+  const m = metar.match(/\b(VRB|\d{3})(\d{2,3})(G(\d{2,3}))?KT\b/);
+  if (!m) return null;
+  const wind = { dir: null, speed: parseInt(m[2]), gust: m[4] ? parseInt(m[4]) : null, vrb: false, varMin: null, varMax: null, raw: m[0] };
+  if (m[1] === 'VRB') wind.vrb = true;
+  else wind.dir = parseInt(m[1]);
+  const v = metar.match(/\b(\d{3})V(\d{3})\b/);
+  if (v) { wind.varMin = parseInt(v[1]); wind.varMax = parseInt(v[2]); }
+  return wind;
+}
+
+function parseMetarTime(metar) {
+  const m = metar.match(/\b(\d{2})(\d{2})(\d{2})Z\b/);
+  if (!m) return null;
+  return { day: parseInt(m[1]), hour: parseInt(m[2]), minute: parseInt(m[3]) };
+}
+
+function metarToDate(metar) {
+  const t = parseMetarTime(metar);
+  if (!t) return null;
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), t.day, t.hour, t.minute));
+  if (d > new Date(now.getTime() + 2 * 86400000)) d.setUTCMonth(d.getUTCMonth() - 1);
+  return d;
+}
+
+function dirText(deg) {
+  if (deg === null) return 'VRB';
+  const dirs = ['K', 'KKD', 'KD', 'DKD', 'D', 'DGD', 'GD', 'GGD', 'G', 'GGB', 'GB', 'BGB', 'B', 'BKB', 'KB', 'KKB'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+function dirTextLong(deg) {
+  if (deg === null) return 'Değişken';
+  const dirs = ['Kuzey','Kuzey-Kuzeydoğu','Kuzeydoğu','Doğu-Kuzeydoğu','Doğu','Doğu-Güneydoğu','Güneydoğu','Güney-Güneydoğu','Güney','Güney-Güneybatı','Güneybatı','Batı-Güneybatı','Batı','Batı-Kuzeybatı','Kuzeybatı','Kuzey-Kuzeybatı'];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+function windTag(speed) {
+  if (speed <= 2) return '<span class="tag tag-calm">Sakin</span>';
+  if (speed <= 7) return '<span class="tag tag-light">Hafif</span>';
+  if (speed <= 15) return '<span class="tag tag-moderate">Orta</span>';
+  if (speed <= 25) return '<span class="tag tag-strong">Kuvvetli</span>';
+  return '<span class="tag tag-severe">Şiddetli</span>';
+}
+
+function windColor(speed) {
+  if (speed <= 2) return '#4ade80';
+  if (speed <= 7) return '#38bdf8';
+  if (speed <= 15) return '#fbbf24';
+  if (speed <= 25) return '#fb923c';
+  return '#f87171';
+}
+
+function weightedCircularMean(angles, weights) {
+  if (!angles.length) return null;
+  let s = 0, c = 0, w = 0;
+  for (let i = 0; i < angles.length; i++) {
+    const r = angles[i] * Math.PI / 180;
+    s += weights[i] * Math.sin(r);
+    c += weights[i] * Math.cos(r);
+    w += weights[i];
+  }
+  let m = Math.atan2(s / w, c / w) * 180 / Math.PI;
+  if (m < 0) m += 360;
+  return Math.round(m);
+}
+
+async function fetchRunways(airport) {
+  try {
+    const resp = await fetch(`/api/runways?airport=${encodeURIComponent(airport)}`);
+    if (resp.ok) {
+      const data = await resp.json();
+      return data.runways || [];
+    }
+  } catch (e) {
+    console.warn('Pist verisi alınamadı:', e);
+  }
+  return [];
+}
+
+let currentRunways = [];
+let currentForecastWind = null;
+let currentLastMetarWind = null;
+let currentRunwayMode = 'forecast'; // 'forecast' or 'metar'
+
+function switchRunwayWindMode(mode) {
+  currentRunwayMode = mode;
+  const btnF = document.getElementById('btnRunwayForecast');
+  const btnM = document.getElementById('btnRunwayMetar');
+  if (btnF) btnF.classList.toggle('active', mode === 'forecast');
+  if (btnM) btnM.classList.toggle('active', mode === 'metar');
+  renderRunwayDetails();
+  drawRunwayCompass();
+}
+
+function calculateRunwayComponents(rwyHeading, windDir, windSpeed, isVrb) {
+  if (isVrb || windDir === null || windSpeed === 0) {
+    return {
+      headwind: 0,
+      tailwind: 0,
+      crosswind: windSpeed || 0,
+      crosswindSide: isVrb ? 'Değişken' : 'Sakin',
+      score: 0
+    };
+  }
+  
+  const rad = ((windDir - rwyHeading) * Math.PI) / 180;
+  const hw = Math.round(windSpeed * Math.cos(rad) * 10) / 10;
+  const xw = Math.round(Math.abs(windSpeed * Math.sin(rad)) * 10) / 10;
+  const sinVal = Math.sin(rad);
+  const crosswindSide = Math.abs(sinVal) < 0.05 ? 'Düz' : sinVal > 0 ? 'Sağdan' : 'Soldan';
+  const score = hw >= 0 ? (hw * 2 - xw * 0.4) : (hw * 4 - xw);
+
+  return {
+    headwind: hw,
+    tailwind: hw < 0 ? Math.abs(hw) : 0,
+    crosswind: xw,
+    crosswindSide,
+    score
+  };
+}
+
+function renderRunwayDetails() {
+  const container = document.getElementById('runwayList');
+  const windPill = document.getElementById('runwayWindPill');
+  const card = document.getElementById('runwayCard');
+  if (!container || !card) return;
+  
+  if (!currentRunways || currentRunways.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+  
+  card.style.display = 'block';
+  
+  const activeWind = currentRunwayMode === 'forecast' ? currentForecastWind : currentLastMetarWind;
+  const modeName = currentRunwayMode === 'forecast' ? 'Tahmin Rüzgarı' : 'Son METAR';
+  
+  if (windPill && activeWind) {
+    const dirTxt = activeWind.vrb ? 'VRB (Değişken)' : (activeWind.dir !== null ? `${activeWind.dir}° (${dirTextLong(activeWind.dir)})` : 'Bilinmiyor');
+    windPill.innerHTML = `<span>💨 Aktif:</span> <strong>${modeName}</strong> · <span>${dirTxt}</span> · <strong>${activeWind.speed} kt</strong> (${Math.round(activeWind.speed * 1.852)} km/h)`;
+  }
+  
+  const endsList = [];
+  currentRunways.forEach(rwy => {
+    rwy.ends.forEach(end => {
+      const comp = calculateRunwayComponents(end.heading, activeWind ? activeWind.dir : null, activeWind ? activeWind.speed : 0, activeWind ? activeWind.vrb : false);
+      endsList.push({ rwy, end, comp });
+    });
+  });
+  
+  let maxScore = -99999;
+  let recommendedEnd = null;
+  endsList.forEach(item => {
+    if (!item.rwy.closed && item.comp.score > maxScore) {
+      maxScore = item.comp.score;
+      recommendedEnd = item;
+    }
+  });
+  
+  endsList.sort((a, b) => {
+    if (a === recommendedEnd) return -1;
+    if (b === recommendedEnd) return 1;
+    return b.comp.score - a.comp.score;
+  });
+  
+  let html = '';
+  endsList.forEach(item => {
+    const { rwy, end, comp } = item;
+    const isRec = item === recommendedEnd && comp.headwind > 0;
+    const recClass = isRec ? 'recommended' : '';
+    
+    let statusTag = '';
+    if (rwy.closed) {
+      statusTag = '<span class="rwy-status-tag tag-warning">⛔ KAPALI PİST</span>';
+    } else if (isRec) {
+      statusTag = '<span class="rwy-status-tag tag-rec">⭐ EN UYGUN PİST</span>';
+    } else if (comp.tailwind > 5) {
+      statusTag = `<span class="rwy-status-tag tag-warning">⚠️ Arka Rüzgar (${comp.tailwind} kt)</span>`;
+    } else if (comp.crosswind > 15) {
+      statusTag = `<span class="rwy-status-tag tag-warning">⚠️ Yan Rüzgar (${comp.crosswind} kt)</span>`;
+    }
+    
+    let hwLabel = 'Karşı Rüzgar (HW)';
+    let hwColor = '#34d399';
+    let hwVal = `+${comp.headwind} kt`;
+    let hwSub = `${Math.round(comp.headwind * 1.852)} km/h · İdeal`;
+    
+    if (comp.headwind < 0) {
+      hwLabel = 'Arka Rüzgar (TW)';
+      hwColor = '#f87171';
+      hwVal = `-${comp.tailwind} kt`;
+      hwSub = `${Math.round(comp.tailwind * 1.852)} km/h · Dikkat`;
+    } else if (comp.headwind === 0) {
+      hwLabel = 'Uzunlamasına Rüzgar';
+      hwColor = 'var(--text)';
+      hwVal = '0 kt';
+      hwSub = 'Nötr';
+    }
+    
+    const xwColor = comp.crosswind <= 10 ? '#38bdf8' : (comp.crosswind <= 20 ? '#fbbf24' : '#f87171');
+    const xwSub = comp.crosswindSide === 'Düz' ? 'Merkez hatta' : `${comp.crosswindSide} (${Math.round(comp.crosswind * 1.852)} km/h)`;
+    
+    const surfaceName = rwy.surface === 'CON' || rwy.surface === 'CONC' ? 'Beton' : (rwy.surface === 'ASP' || rwy.surface === 'ASPH' ? 'Asfalt' : rwy.surface || 'Kaplama');
+    const dimText = rwy.length_m ? `${rwy.length_m.toLocaleString('tr-TR')} m × ${rwy.width_m || '—'} m (${rwy.length_ft} ft)` : '';
+    
+    html += `
+      <div class="rwy-card ${recClass}">
+        <div class="rwy-card-header">
+          <div class="rwy-ident-box">
+            <span class="rwy-badge">PİST ${end.ident}</span>
+            <span class="rwy-hdg">${String(end.heading).padStart(3, '0')}°</span>
+          </div>
+          ${statusTag}
+        </div>
+        <div class="rwy-meta">
+          ${dimText ? dimText + ' · ' : ''}${surfaceName}
+        </div>
+        <div class="rwy-components-grid">
+          <div class="rwy-comp-box">
+            <div class="rwy-comp-label">${hwLabel}</div>
+            <div class="rwy-comp-val" style="color:${hwColor}">${hwVal}</div>
+            <div class="rwy-comp-sub">${hwSub}</div>
+          </div>
+          <div class="rwy-comp-box">
+            <div class="rwy-comp-label">Yan Rüzgar (XW)</div>
+            <div class="rwy-comp-val" style="color:${xwColor}">${comp.crosswind} kt</div>
+            <div class="rwy-comp-sub">${xwSub}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  });
+  
+  container.innerHTML = html;
+}
+
+function drawRunwayCompass() {
+  const canvas = document.getElementById('runwayCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const size = 340;
+  
+  canvas.width = size * dpr;
+  canvas.height = size * dpr;
+  ctx.scale(dpr, dpr);
+  
+  const cx = size / 2;
+  const cy = size / 2;
+  const R = 150;
+  
+  ctx.clearRect(0, 0, size, size);
+  
+  // Background & outer ring
+  const bgGrad = ctx.createRadialGradient(cx, cy, 20, cx, cy, R);
+  bgGrad.addColorStop(0, '#0f172a');
+  bgGrad.addColorStop(1, '#050a14');
+  ctx.fillStyle = bgGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  // Dashed range rings
+  ctx.strokeStyle = 'rgba(51, 65, 85, 0.4)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 4]);
+  [R * 0.4, R * 0.7].forEach(r => {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  
+  // Compass degree ticks & labels
+  for (let deg = 0; deg < 360; deg += 10) {
+    const rad = (deg * Math.PI) / 180;
+    const isMajor = deg % 30 === 0;
+    const tickLen = isMajor ? 9 : 4;
+    const rOuter = R - 4;
+    const rInner = rOuter - tickLen;
+    
+    const x1 = cx + rOuter * Math.sin(rad);
+    const y1 = cy - rOuter * Math.cos(rad);
+    const x2 = cx + rInner * Math.sin(rad);
+    const y2 = cy - rInner * Math.cos(rad);
+    
+    ctx.strokeStyle = isMajor ? '#64748b' : '#334155';
+    ctx.lineWidth = isMajor ? 1.5 : 1;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    
+    if (isMajor) {
+      const textR = rInner - 12;
+      const tx = cx + textR * Math.sin(rad);
+      const ty = cy - textR * Math.cos(rad);
+      
+      let label = String(deg).padStart(3, '0');
+      let isCardinal = false;
+      if (deg === 0) { label = 'N'; isCardinal = true; }
+      else if (deg === 90) { label = 'E'; isCardinal = true; }
+      else if (deg === 180) { label = 'S'; isCardinal = true; }
+      else if (deg === 270) { label = 'W'; isCardinal = true; }
+      
+      ctx.font = isCardinal ? 'bold 11px sans-serif' : '9px sans-serif';
+      ctx.fillStyle = isCardinal ? '#38bdf8' : '#64748b';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, tx, ty);
+    }
+  }
+  
+  if (!currentRunways || currentRunways.length === 0) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Pist verisi bulunamadı', cx, cy);
+    return;
+  }
+  
+  // Group parallel runways to calculate offsets
+  const groups = [];
+  currentRunways.forEach(rwy => {
+    const h = (rwy.ends[0].heading % 180 + 180) % 180;
+    let found = groups.find(g => Math.abs(g.angle - h) < 10 || Math.abs(g.angle - h) > 170);
+    if (!found) {
+      found = { angle: h, runways: [] };
+      groups.push(found);
+    }
+    found.runways.push(rwy);
+  });
+  
+  const runwayOffsets = new Map();
+  groups.forEach(g => {
+    const count = g.runways.length;
+    const spacing = 22;
+    const start = -((count - 1) * spacing) / 2;
+    g.runways.forEach((rwy, idx) => {
+      runwayOffsets.set(rwy, start + idx * spacing);
+    });
+  });
+  
+  // Draw each runway
+  currentRunways.forEach(rwy => {
+    const end0 = rwy.ends[0];
+    const end1 = rwy.ends[1] || { ident: '', heading: (end0.heading + 180) % 360 };
+    const hdg = end0.heading;
+    const offset = runwayOffsets.get(rwy) || 0;
+    
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate((hdg * Math.PI) / 180);
+    
+    const rwWidth = 18;
+    const rwLength = 190;
+    const rx = -rwWidth / 2 + offset;
+    const ry = -rwLength / 2;
+    
+    ctx.fillStyle = rwy.closed ? '#1e293b' : '#1e293b';
+    ctx.fillRect(rx, ry, rwWidth, rwLength);
+    
+    ctx.strokeStyle = rwy.closed ? '#7f1d1d' : '#475569';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(rx, ry, rwWidth, rwLength);
+    
+    // Centerline
+    ctx.strokeStyle = '#f8fafc';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(offset, ry + 22);
+    ctx.lineTo(offset, ry + rwLength - 22);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+    // Threshold piano keys
+    ctx.strokeStyle = '#f8fafc';
+    ctx.lineWidth = 1;
+    for (let k = -rwWidth / 2 + 3; k < rwWidth / 2 - 2; k += 3) {
+      ctx.beginPath();
+      ctx.moveTo(offset + k, ry + 3);
+      ctx.lineTo(offset + k, ry + 12);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(offset + k, ry + rwLength - 3);
+      ctx.lineTo(offset + k, ry + rwLength - 12);
+      ctx.stroke();
+    }
+    
+    // Runway numbers
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    
+    // Top badge (departure / reciprocal end)
+    if (end1.ident) {
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(offset - 10, ry - 14, 20, 12);
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(offset - 10, ry - 14, 20, 12);
+      ctx.fillStyle = '#34d399';
+      ctx.fillText(end1.ident, offset, ry - 8);
+    }
+    
+    // Bottom badge (approach entrance threshold for heading hdg)
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(offset - 10, ry + rwLength + 2, 20, 12);
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(offset - 10, ry + rwLength + 2, 20, 12);
+    ctx.fillStyle = '#34d399';
+    ctx.fillText(end0.ident, offset, ry + rwLength + 8);
+    
+    if (rwy.closed) {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(rx + 2, ry + 20); ctx.lineTo(rx + rwWidth - 2, ry + 40);
+      ctx.moveTo(rx + rwWidth - 2, ry + 20); ctx.lineTo(rx + 2, ry + 40);
+      ctx.stroke();
+    }
+    
+    ctx.restore();
+  });
+  
+  // Draw Wind Vector
+  const activeWind = currentRunwayMode === 'forecast' ? currentForecastWind : currentLastMetarWind;
+  if (activeWind && activeWind.speed !== null) {
+    if (activeWind.vrb) {
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 55, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(cx - 40, cy - 10, 80, 20);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.strokeRect(cx - 40, cy - 10, 80, 20);
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`VRB ${activeWind.speed}kt`, cx, cy);
+    } else if (activeWind.speed <= 2) {
+      ctx.fillStyle = 'rgba(74, 222, 128, 0.2)';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 28, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#4ade80';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`SAKİN`, cx, cy - 4);
+      ctx.font = '8px sans-serif';
+      ctx.fillText(`${activeWind.speed} kt`, cx, cy + 8);
+    } else if (activeWind.dir !== null) {
+      const theta = (activeWind.dir * Math.PI) / 180;
+      const arrowStartR = R - 14;
+      const arrowTipR = 16;
+      
+      const sx = cx + arrowStartR * Math.sin(theta);
+      const sy = cy - arrowStartR * Math.cos(theta);
+      const tx = cx + arrowTipR * Math.sin(theta);
+      const ty = cy - arrowTipR * Math.cos(theta);
+      
+      const angle = Math.atan2(ty - sy, tx - sx);
+      const backAngle = angle + Math.PI;
+      const headLen = 16;
+      const headWingAngle = 0.45;
+      
+      const w1x = tx + headLen * Math.cos(backAngle - headWingAngle);
+      const w1y = ty + headLen * Math.sin(backAngle - headWingAngle);
+      const w2x = tx + headLen * Math.cos(backAngle + headWingAngle);
+      const w2y = ty + headLen * Math.sin(backAngle + headWingAngle);
+      
+      const baseLen = headLen * 0.65;
+      const bx = tx + baseLen * Math.cos(backAngle);
+      const by = ty + baseLen * Math.sin(backAngle);
+      
+      ctx.save();
+      ctx.shadowColor = '#38bdf8';
+      ctx.shadowBlur = 12;
+      
+      // Arrow shaft
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      
+      // Arrowhead pointing directly towards runway center
+      ctx.fillStyle = '#38bdf8';
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(w1x, w1y);
+      ctx.lineTo(bx, by);
+      ctx.lineTo(w2x, w2y);
+      ctx.closePath();
+      ctx.fill();
+      
+      // Dashed wind flow trajectory line crossing the runway
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      const oppR = 55;
+      const oppX = cx - oppR * Math.sin(theta);
+      const oppY = cy + oppR * Math.cos(theta);
+      ctx.lineTo(oppX, oppY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      
+      // Origin badge
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(-32, -11, 64, 22);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(-32, -11, 64, 22);
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${activeWind.dir}° / ${activeWind.speed}kt`, 0, 0);
+      ctx.restore();
+    }
+  }
+}
+
+// ── Main ──
+async function analyze() {
+  const airport = document.getElementById('airportInput').value.trim().toUpperCase();
+  const timeVal = document.getElementById('timeInput').value;
+  if (!airport) { showError('Lütfen bir havalimanı kodu girin.'); return; }
+  if (!timeVal) { showError('Lütfen bir saat girin.'); return; }
+  const [targetHour, targetMin] = timeVal.split(':').map(Number);
+
+  hideError();
+  showLoading(true);
+  document.getElementById('results').style.display = 'none';
+
+  try {
+    const [raw, runways] = await Promise.all([
+      fetchMetar(airport),
+      fetchRunways(airport)
+    ]);
+
+    if (raw.includes('<!DOCTYPE') || raw.includes('<html')) {
+      throw new Error(`"${airport}" kodu için METAR verisi bulunamadı. ICAO kodunu kontrol edin (4 harfli, örn: LTFM).`);
+    }
+
+    const lines = raw.trim().split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const metarLines = [];
+    const tafLines = [];
+    let inTaf = false;
+
+    for (const line of lines) {
+      if (line.startsWith('TAF ')) {
+        inTaf = true;
+        tafLines.push(line);
+      } else if (inTaf && /^\s/.test(line) || (inTaf && /^(BECMG|TEMPO|FM|PROB)/.test(line))) {
+        tafLines[tafLines.length - 1] += ' ' + line.trim();
+      } else {
+        inTaf = false;
+        if (line.match(/^(METAR|SPECI)\s/) || line.match(/^[A-Z]{4}\s\d{6}Z/)) {
+          metarLines.push(line);
+        }
+      }
+    }
+
+    if (metarLines.length === 0) throw new Error(`"${airport}" için METAR verisi bulunamadı.`);
+
+    // Parse
+    const metars = [];
+    for (const line of metarLines) {
+      const wind = parseMetarWind(line);
+      const time = parseMetarTime(line);
+      const date = metarToDate(line);
+      if (wind && time && date) {
+        metars.push({
+          raw: line, wind, utc: time, date,
+          utcHour: time.hour, utcMin: time.minute,
+          daysAgo: Math.floor((Date.now() - date.getTime()) / 86400000)
+        });
+      }
+    }
+    metars.sort((a, b) => a.date - b.date);
+
+    if (metars.length < 3) throw new Error('Yeterli METAR verisi bulunamadı (en az 3 rapor gerekli).');
+
+    // ── Prediction ──
+    const matchingMetars = metars.filter(m => {
+      const diff = Math.abs(m.utcHour - targetHour);
+      return diff <= 1 || diff >= 23;
+    });
+
+    const maxAge = Math.max(...metars.map(m => Date.now() - m.date.getTime()));
+    let totalWeight = 0, weightedSpeed = 0, weightedGust = 0, gustCount = 0;
+    const dirs = [], dirWeights = [], allSpeeds = [];
+    const sourceMetars = matchingMetars.length >= 2 ? matchingMetars : metars;
+
+    for (const m of sourceMetars) {
+      const age = Date.now() - m.date.getTime();
+      const w = 1 + 2 * (1 - age / maxAge);
+      const hourDiff = Math.abs(m.utcHour - targetHour);
+      const hourW = hourDiff <= 0 ? 2 : hourDiff <= 1 ? 1.5 : 1;
+      const finalW = w * hourW;
+      weightedSpeed += m.wind.speed * finalW;
+      totalWeight += finalW;
+      allSpeeds.push(m.wind.speed);
+      if (m.wind.gust) { weightedGust += m.wind.gust * finalW; gustCount++; }
+      if (m.wind.dir !== null) { dirs.push(m.wind.dir); dirWeights.push(finalW); }
+    }
+
+    const predSpeed = Math.round(weightedSpeed / totalWeight);
+    const predDir = dirs.length > 0 ? weightedCircularMean(dirs, dirWeights) : null;
+    const predGust = gustCount > 0 ? Math.round(weightedGust / gustCount) : null;
+    const predVrb = dirs.length < sourceMetars.length * 0.4;
+
+    const matchSpeeds = matchingMetars.map(m => m.wind.speed);
+    const minSpeed = matchSpeeds.length ? Math.min(...matchSpeeds) : Math.min(...allSpeeds);
+    const maxSpeedRange = matchSpeeds.length ? Math.max(...matchSpeeds) : Math.max(...allSpeeds);
+
+    let confidence = 50;
+    if (matchingMetars.length >= 5) confidence += 25;
+    else if (matchingMetars.length >= 3) confidence += 15;
+    else if (matchingMetars.length >= 2) confidence += 8;
+    if (metars.length >= 40) confidence += 10;
+    else if (metars.length >= 20) confidence += 5;
+    const stdDev = matchSpeeds.length > 1 ? Math.sqrt(matchSpeeds.reduce((s, v) => s + (v - predSpeed) ** 2, 0) / matchSpeeds.length) : 5;
+    if (stdDev < 2) confidence += 10;
+    else if (stdDev > 6) confidence -= 15;
+    confidence = Math.min(95, Math.max(15, confidence));
+
+    let trend = 'stable';
+    if (matchingMetars.length >= 4) {
+      const half = Math.floor(matchingMetars.length / 2);
+      const older = matchingMetars.slice(0, half).reduce((s, m) => s + m.wind.speed, 0) / half;
+      const newer = matchingMetars.slice(half).reduce((s, m) => s + m.wind.speed, 0) / (matchingMetars.length - half);
+      if (newer > older + 2) trend = 'increasing';
+      else if (newer < older - 2) trend = 'decreasing';
+    }
+
+    // ── Render ──
+    // Last METAR
+    const lastMetar = metars[metars.length - 1];
+    document.getElementById('lastMetarCard').innerHTML = `
+      <h2>📡 Son METAR</h2>
+      <div class="taf-raw">${lastMetar.raw}</div>`;
+
+    const dirDisplay = predVrb ? 'VRB' : `${predDir}°`;
+    const dirLabel = predVrb ? 'Değişken' : dirTextLong(predDir);
+    const trendIcon = trend === 'increasing' ? '📈' : trend === 'decreasing' ? '📉' : '➡️';
+    const trendText = trend === 'increasing' ? 'Artış eğiliminde' : trend === 'decreasing' ? 'Azalış eğiliminde' : 'Stabil';
+    const utcStr = `${String(targetHour).padStart(2,'0')}:${String(targetMin).padStart(2,'0')}`;
+
+    document.getElementById('forecastCard').innerHTML = `
+      <h2>🎯 TAHMİN — ${utcStr} UTC</h2>
+      <div class="forecast-grid">
+        <div class="forecast-item">
+          <div class="label">Yön</div>
+          <div class="value" style="color:${windColor(predSpeed)}">${dirDisplay}</div>
+          <div class="unit">${dirLabel}</div>
+        </div>
+        <div class="forecast-item">
+          <div class="label">Hız</div>
+          <div class="value" style="color:${windColor(predSpeed)}">${predSpeed} <span class="unit">kt</span></div>
+          <div class="unit">${(predSpeed * 1.852).toFixed(0)} km/h</div>
+        </div>
+        <div class="forecast-item">
+          <div class="label">Gust</div>
+          <div class="value">${predGust ? predGust + ' <span class="unit">kt</span>' : '—'}</div>
+          <div class="unit">${predGust ? (predGust * 1.852).toFixed(0) + ' km/h' : 'Beklenmez'}</div>
+        </div>
+        <div class="forecast-item">
+          <div class="label">72s Aralık</div>
+          <div class="value">${minSpeed}–${maxSpeedRange} <span class="unit">kt</span></div>
+          <div class="unit">${matchingMetars.length} gözleme dayalı</div>
+        </div>
+      </div>
+      <div class="confidence">
+        <span style="font-size:0.8rem;color:var(--text2)">Güven:</span>
+        <div class="confidence-bar">
+          <div class="confidence-fill" style="width:${confidence}%;background:${confidence > 70 ? 'var(--green)' : confidence > 45 ? 'var(--yellow)' : 'var(--red)'}"></div>
+        </div>
+        <span style="font-size:0.85rem;font-weight:600">${confidence}%</span>
+        <span style="margin-left:8px">${windTag(predSpeed)}</span>
+        <span style="margin-left:8px;font-size:0.85rem">${trendIcon} ${trendText}</span>
+      </div>`;
+
+    // Commentary
+    document.getElementById('commentaryCard').innerHTML = `
+      <h2>💬 Yorum & Analiz</h2>
+      <div class="commentary">${buildCommentary(airport, utcStr, predSpeed, predDir, predGust, predVrb, trend, matchingMetars, metars, confidence, stdDev)}</div>`;
+
+    // TAF
+    if (tafLines.length) {
+      document.getElementById('tafCard').style.display = '';
+      document.getElementById('tafCard').innerHTML = `<h2>📋 TAF (Terminal Tahmin)</h2><div class="taf-raw">${tafLines.join('\n')}</div>`;
+    } else {
+      document.getElementById('tafCard').style.display = 'none';
+    }
+
+    // Stats
+    const avgAll = (metars.reduce((s, m) => s + m.wind.speed, 0) / metars.length).toFixed(1);
+    const maxAll = Math.max(...metars.map(m => m.wind.speed));
+    const maxGAll = Math.max(...metars.map(m => m.wind.gust || 0));
+    const calmPct = ((metars.filter(m => m.wind.speed <= 2).length / metars.length) * 100).toFixed(0);
+
+    document.getElementById('statsCard').innerHTML = `
+      <h2>📈 72 Saatlik İstatistikler</h2>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="stat-label">Toplam Rapor</div><div class="stat-value">${metars.length}</div><div class="stat-unit">METAR</div></div>
+        <div class="stat-box"><div class="stat-label">Ortalama Hız</div><div class="stat-value">${avgAll}</div><div class="stat-unit">kt</div></div>
+        <div class="stat-box"><div class="stat-label">Maks Hız</div><div class="stat-value">${maxAll}</div><div class="stat-unit">kt</div></div>
+        <div class="stat-box"><div class="stat-label">Maks Gust</div><div class="stat-value">${maxGAll || '—'}</div><div class="stat-unit">${maxGAll ? 'kt' : ''}</div></div>
+        <div class="stat-box"><div class="stat-label">Sakin (≤2kt)</div><div class="stat-value">${calmPct}%</div><div class="stat-unit">${metars.filter(m => m.wind.speed <= 2).length}/${metars.length}</div></div>
+        <div class="stat-box"><div class="stat-label">Hedef Saatte</div><div class="stat-value">${matchingMetars.length}</div><div class="stat-unit">eşleşen rapor</div></div>
+      </div>`;
+
+    renderMetarTable(metars, targetHour);
+
+    // Setup Runway Visualization
+    currentRunways = runways;
+    currentForecastWind = {
+      dir: predDir,
+      speed: predSpeed,
+      vrb: predVrb
+    };
+    currentLastMetarWind = {
+      dir: lastMetar.wind.dir,
+      speed: lastMetar.wind.speed,
+      vrb: lastMetar.wind.vrb
+    };
+    currentRunwayMode = 'forecast';
+    const btnF = document.getElementById('btnRunwayForecast');
+    const btnM = document.getElementById('btnRunwayMetar');
+    if (btnF) btnF.classList.add('active');
+    if (btnM) btnM.classList.remove('active');
+    renderRunwayDetails();
+
+    document.getElementById('results').style.display = 'block';
+    // Chart and Runway compass must render after display:block so canvas has dimensions
+    requestAnimationFrame(() => {
+      renderChart(metars, targetHour);
+      drawRunwayCompass();
+    });
+    document.getElementById('lastMetarCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+function buildCommentary(airport, utcStr, speed, dir, gust, vrb, trend, matching, all, confidence, stdDev) {
+  const p = [];
+  p.push(`<strong>${airport}</strong> meydanı için <strong>${utcStr} UTC</strong> saatinde rüzgar tahmini, son <strong>72 saatlik ${all.length} adet METAR</strong> raporunun analizine dayanmaktadır.`);
+
+  if (matching.length >= 3)
+    p.push(`Hedef saate yakın (±1 saat) <strong>${matching.length} adet gözlem</strong> bulundu — tahmin güvenilirliği yüksek.`);
+  else if (matching.length >= 1)
+    p.push(`Hedef saate yakın <strong>${matching.length} adet gözlem</strong> bulundu; tüm veri seti ile desteklendi.`);
+  else
+    p.push(`Hedef saate tam eşleşen gözlem bulunamadı; tahmin tüm veri setinin ağırlıklı ortalamasına dayanmaktadır.`);
+
+  if (speed <= 2) p.push(`<strong>Rüzgar neredeyse sakin</strong> olarak beklenmektedir. Termal aktivite henüz başlamamış veya gece inversiyonu devam ediyor olabilir.`);
+  else if (speed <= 7) p.push(`<strong>Hafif esinti</strong> beklenmektedir. Operasyonel kısıtlama oluşturması beklenmez.`);
+  else if (speed <= 15) p.push(`<strong>Orta şiddette rüzgar</strong> beklenmektedir. Hafif türbülans olasılığına dikkat.`);
+  else if (speed <= 25) p.push(`<strong>Kuvvetli rüzgar</strong> beklenmektedir! Crosswind bileşeni kontrol edilmeli. Wind shear ve türbülans olasılığı vardır.`);
+  else p.push(`<strong>⚠️ Şiddetli rüzgar koşulları!</strong> Operasyonel kısıtlamalar olabilir. Crosswind limitlerini kontrol edin.`);
+
+  if (vrb) p.push(`Rüzgar yönü <strong>değişken</strong> karakterdedir; belirgin hakim yön tespit edilememiştir.`);
+  else if (dir !== null) p.push(`Hakim rüzgar yönü <strong>${dir}° (${dirTextLong(dir)})</strong> olarak belirlenmiştir.`);
+
+  if (gust) p.push(`<strong>${gust} kt'a varan hamle (gust)</strong> olasılığı mevcuttur.`);
+
+  if (trend === 'increasing') p.push(`📈 Son günlerde bu saatte rüzgar hızında <strong>artış eğilimi</strong> gözlenmektedir.`);
+  else if (trend === 'decreasing') p.push(`📉 Son günlerde bu saatte rüzgar hızında <strong>azalma eğilimi</strong> gözlenmektedir.`);
+  else p.push(`➡️ Bu saatteki rüzgar koşulları son 72 saatte <strong>tutarlı ve stabil</strong> seyretmiştir.`);
+
+  if (stdDev < 2) p.push(`Veri tutarlılığı <strong>yüksek</strong> (σ = ${stdDev.toFixed(1)} kt).`);
+  else if (stdDev > 5) p.push(`⚠️ Veri tutarlılığı <strong>düşük</strong> (σ = ${stdDev.toFixed(1)} kt). Gerçek değer önemli ölçüde farklı olabilir.`);
+
+  p.push(`<br><br>⚠️ <em>Bu tahmin istatistiksel analiz sonucudur. Resmi uçuş planlaması için güncellenmiş TAF/METAR kullanın.</em>`);
+  return p.join(' ');
+}
+
+function renderMetarTable(metars, targetHour) {
+  let html = `<table class="metar-table"><thead><tr>
+    <th>Gün</th><th>UTC</th><th>Rüzgar Yönü</th><th>Hız</th><th>Gust</th><th>Değişken</th><th>Şiddet</th>
+  </tr></thead><tbody>`;
+  for (const m of [...metars].reverse()) {
+    const diff = Math.abs(m.utcHour - targetHour);
+    const isMatch = diff <= 1 || diff >= 23;
+    const cls = isMatch ? 'highlight' : '';
+    const dayLabels = ['Bugün', 'Dün', '2g önce', '3g önce'];
+    const dayLabel = m.daysAgo < 4 ? dayLabels[m.daysAgo] : m.daysAgo + 'g önce';
+    const dayClass = `day-${Math.min(m.daysAgo, 3)}`;
+    
+    let dirCell = '<span style="color:var(--text2)">VRB</span>';
+    if (!m.wind.vrb && m.wind.dir !== null) {
+      const rot = (m.wind.dir + 180) % 360;
+      dirCell = `<span style="display:inline-flex;align-items:center;gap:6px;">
+        <span style="display:inline-block;transform:rotate(${rot}deg);font-size:12px;color:var(--accent);line-height:1;">↑</span>
+        <span><strong>${String(m.wind.dir).padStart(3, '0')}°</strong> <small style="color:var(--text2)">(${dirText(m.wind.dir)})</small></span>
+      </span>`;
+    }
+
+    html += `<tr class="${cls}">
+      <td><span class="day-badge ${dayClass}">${dayLabel}</span></td>
+      <td>${String(m.utcHour).padStart(2,'0')}:${String(m.utcMin).padStart(2,'0')}Z</td>
+      <td>${dirCell}</td>
+      <td><strong>${m.wind.speed} kt</strong></td>
+      <td>${m.wind.gust ? m.wind.gust + ' kt' : '—'}</td>
+      <td>${m.wind.varMin !== null ? m.wind.varMin + '°V' + m.wind.varMax + '°' : '—'}</td>
+      <td>${windTag(m.wind.speed)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('metarTableContainer').innerHTML = html;
+}
+
+let currentChartMetars = [];
+let currentChartTargetHour = null;
+let chartPoints = [];
+let hoveredPointIndex = -1;
+
+function drawMiniArrow(ctx, x, y, deg, color, size = 6) {
+  if (deg === null) return;
+  const rad = ((deg + 180) * Math.PI) / 180;
+  const dx = size * Math.sin(rad);
+  const dy = -size * Math.cos(rad);
+  
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(x - dx, y - dy);
+  ctx.lineTo(x + dx, y + dy);
+  ctx.stroke();
+  
+  const headAngle = 0.5;
+  const headLen = size * 0.75;
+  ctx.beginPath();
+  ctx.moveTo(x + dx, y + dy);
+  ctx.lineTo(x + dx - headLen * Math.sin(rad - headAngle), y + dy + headLen * Math.cos(rad - headAngle));
+  ctx.lineTo(x + dx - headLen * Math.sin(rad + headAngle), y + dy + headLen * Math.cos(rad + headAngle));
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function renderChart(metars, targetHour) {
+  if (metars) currentChartMetars = metars;
+  if (targetHour !== undefined) currentChartTargetHour = targetHour;
+  
+  const canvas = document.getElementById('windChart');
+  if (!canvas || !currentChartMetars || currentChartMetars.length === 0) return;
+  
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const H = 280;
+  const W = canvas.offsetWidth || 860;
+  
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  ctx.scale(dpr, dpr);
+  
+  const pad = { top: 30, right: 30, bottom: 45, left: 48 };
+  const plotW = W - pad.left - pad.right;
+  const plotH = H - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, W, H);
+  
+  const sorted = [...currentChartMetars].sort((a, b) => a.date - b.date);
+  const maxSpd = Math.max(...sorted.map(m => m.wind.gust || m.wind.speed), 10);
+  const yScale = plotH / (maxSpd + 3);
+  
+  // 1. Grid & Y-Axis (Speed in kt)
+  ctx.strokeStyle = '#334155';
+  ctx.lineWidth = 0.5;
+  ctx.font = '10px -apple-system, sans-serif';
+  
+  const step = maxSpd > 35 ? 10 : 5;
+  for (let y = 0; y <= maxSpd + 3; y += step) {
+    const py = pad.top + plotH - y * yScale;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, py);
+    ctx.lineTo(W - pad.right, py);
+    ctx.stroke();
+    
+    ctx.fillStyle = '#94a3b8';
+    ctx.textAlign = 'right';
+    ctx.fillText(y + ' kt', pad.left - 6, py + 4);
+  }
+  
+  // 2. Time Axis (X)
+  const tMin = sorted[0].date.getTime();
+  const tMax = sorted[sorted.length - 1].date.getTime();
+  const tRange = tMax - tMin || 1;
+  
+  for (let i = 0; i <= 6; i++) {
+    const t = new Date(tMin + (tRange / 6) * i);
+    const x = pad.left + ((tRange / 6) * i / tRange) * plotW;
+    const label = `${String(t.getUTCDate()).padStart(2, '0')}/${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}Z`;
+    ctx.fillStyle = '#94a3b8';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x, H - 8);
+    ctx.beginPath();
+    ctx.strokeStyle = '#334155';
+    ctx.moveTo(x, pad.top);
+    ctx.lineTo(x, pad.top + plotH);
+    ctx.stroke();
+  }
+  
+  // Highlight target bands
+  for (const m of sorted) {
+    const diff = Math.abs(m.utcHour - currentChartTargetHour);
+    if (diff <= 1 || diff >= 23) {
+      const x = pad.left + ((m.date.getTime() - tMin) / tRange) * plotW;
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
+      ctx.fillRect(x - 8, pad.top, 16, plotH);
+    }
+  }
+  
+  // 3. Speed Line
+  ctx.beginPath();
+  ctx.strokeStyle = '#38bdf8';
+  ctx.lineWidth = 2.2;
+  ctx.lineJoin = 'round';
+  
+  chartPoints = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const m = sorted[i];
+    const x = pad.left + ((m.date.getTime() - tMin) / tRange) * plotW;
+    const y = pad.top + plotH - m.wind.speed * yScale;
+    chartPoints.push({ x, y, metar: m, index: i });
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  
+  // Draw hovered vertical guide line
+  if (hoveredPointIndex >= 0 && hoveredPointIndex < chartPoints.length) {
+    const hp = chartPoints[hoveredPointIndex];
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(hp.x, pad.top);
+    ctx.lineTo(hp.x, pad.top + plotH);
+    ctx.stroke();
+    ctx.restore();
+  }
+  
+  // 4. Data points & Gusts & Direction Arrows
+  for (let i = 0; i < chartPoints.length; i++) {
+    const p = chartPoints[i];
+    const m = p.metar;
+    const isHovered = (i === hoveredPointIndex);
+    const diff = Math.abs(m.utcHour - currentChartTargetHour);
+    const isMatch = diff <= 1 || diff >= 23;
+    
+    // Gust indicator
+    if (m.wind.gust) {
+      const gy = pad.top + plotH - m.wind.gust * yScale;
+      ctx.beginPath();
+      ctx.arc(p.x, gy, isHovered ? 5 : 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#f87171';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(248, 113, 113, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x, gy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    
+    if (isHovered) {
+      // Enlarged pulse ring on hover
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 14, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      
+      // Core point
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 6.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      
+      // Enlarged Direction Arrow above hovered point
+      if (m.wind.dir !== null) {
+        drawMiniArrow(ctx, p.x, p.y - 20, m.wind.dir, '#38bdf8', 11);
+      }
+      ctx.restore();
+    } else {
+      // Normal point
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, isMatch ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = isMatch ? '#38bdf8' : windColor(m.wind.speed);
+      ctx.fill();
+      
+      if (isMatch) {
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      
+      // Direction arrow above point
+      if (m.wind.dir !== null) {
+        drawMiniArrow(ctx, p.x, p.y - 10, m.wind.dir, '#38bdf8', 6);
+      }
+    }
+  }
+  
+  // 5. Legend
+  ctx.font = '10px -apple-system, sans-serif';
+  ctx.textAlign = 'left';
+  let lx = pad.left + 5;
+  const ly = H - 24;
+  
+  ctx.fillStyle = '#38bdf8';
+  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('Rüzgar Hızı (kt)', lx + 8, ly + 4);
+  lx += 105;
+  
+  ctx.fillStyle = '#f87171';
+  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('Gust (kt)', lx + 8, ly + 4);
+  lx += 75;
+  
+  drawMiniArrow(ctx, lx + 4, ly, 0, '#38bdf8', 5);
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('Rüzgar Yön Oku (Üzerine gelince büyür)', lx + 14, ly + 4);
+  lx += 205;
+  
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.3)';
+  ctx.fillRect(lx, ly - 4, 12, 8);
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillText('Hedef saat', lx + 16, ly + 4);
+}
+
+function setupChartHover() {
+  const canvas = document.getElementById('windChart');
+  const tooltip = document.getElementById('chartTooltip');
+  if (!canvas || !tooltip) return;
+  
+  canvas.addEventListener('mousemove', (e) => {
+    if (!chartPoints || chartPoints.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    
+    let closest = null;
+    let minDist = 9999;
+    for (let i = 0; i < chartPoints.length; i++) {
+      const d = Math.abs(chartPoints[i].x - mx);
+      if (d < minDist) {
+        minDist = d;
+        closest = chartPoints[i];
+      }
+    }
+    
+    if (closest && minDist < 24) {
+      if (hoveredPointIndex !== closest.index) {
+        hoveredPointIndex = closest.index;
+        renderChart();
+      }
+      
+      const m = closest.metar;
+      const dayLabels = ['Bugün', 'Dün', '2 gün önce', '3 gün önce'];
+      const dayTxt = m.daysAgo < 4 ? dayLabels[m.daysAgo] : `${m.daysAgo}g önce`;
+      const timeStr = `${String(m.utcHour).padStart(2, '0')}:${String(m.utcMin).padStart(2, '0')} UTC`;
+      
+      let dirHtml = '';
+      if (m.wind.vrb) {
+        dirHtml = `<div class="chart-tooltip-dir" style="color:#fbbf24">VRB</div>
+          <div class="chart-tooltip-sub">Değişken Yön</div>`;
+      } else if (m.wind.dir !== null) {
+        const rot = (m.wind.dir + 180) % 360;
+        dirHtml = `
+          <div class="chart-tooltip-dir">
+            <span class="chart-tooltip-arrow" style="transform:rotate(${rot}deg)">↑</span>
+            <span>${String(m.wind.dir).padStart(3, '0')}°</span>
+          </div>
+          <div class="chart-tooltip-sub">${dirTextLong(m.wind.dir)} (${dirText(m.wind.dir)})</div>
+        `;
+      } else {
+        dirHtml = `<div class="chart-tooltip-dir">—</div>`;
+      }
+      
+      let gustHtml = '';
+      if (m.wind.gust) {
+        gustHtml = `<div style="color:#f87171;font-size:0.75rem;margin-top:6px;font-weight:600;border-top:1px solid rgba(51,65,85,0.4);padding-top:4px;">⚡ Hamle (Gust): ${m.wind.gust} kt (${Math.round(m.wind.gust * 1.852)} km/h)</div>`;
+      }
+      
+      tooltip.innerHTML = `
+        <div class="chart-tooltip-time">📅 ${dayTxt} · ${timeStr}</div>
+        <div class="chart-tooltip-grid">
+          <div>
+            <div class="chart-tooltip-label">Rüzgar Hızı</div>
+            <div class="chart-tooltip-val-large" style="color:${windColor(m.wind.speed)}">${m.wind.speed} <span style="font-size:0.9rem;font-weight:500;color:var(--text2)">kt</span></div>
+            <div class="chart-tooltip-sub">${Math.round(m.wind.speed * 1.852)} km/h</div>
+          </div>
+          <div>
+            <div class="chart-tooltip-label">Rüzgar Yönü</div>
+            ${dirHtml}
+          </div>
+        </div>
+        ${gustHtml}
+      `;
+      
+      tooltip.style.display = 'block';
+      const tooltipX = Math.max(105, Math.min(canvas.offsetWidth - 105, closest.x));
+      tooltip.style.left = tooltipX + 'px';
+      tooltip.style.top = Math.max(70, closest.y) + 'px';
+    } else {
+      if (hoveredPointIndex !== -1) {
+        hoveredPointIndex = -1;
+        renderChart();
+      }
+      tooltip.style.display = 'none';
+    }
+  });
+  
+  canvas.addEventListener('mouseleave', () => {
+    if (hoveredPointIndex !== -1) {
+      hoveredPointIndex = -1;
+      renderChart();
+    }
+    tooltip.style.display = 'none';
+  });
+}
+setupChartHover();
+
+function showError(msg) { document.getElementById('errorBox').innerHTML = `<div class="error-msg">❌ ${msg}</div>`; }
+function hideError() { document.getElementById('errorBox').innerHTML = ''; }
+function showLoading(show) {
+  document.getElementById('loadingBox').style.display = show ? '' : 'none';
+  document.getElementById('analyzeBtn').disabled = show;
+}
+
+document.getElementById('airportInput').addEventListener('keydown', e => { if (e.key === 'Enter') analyze(); });
+document.getElementById('timeInput').addEventListener('keydown', e => { if (e.key === 'Enter') analyze(); });
+window.addEventListener('resize', () => {
+  drawRunwayCompass();
+  renderChart();
+});
+</script>
+</body>
+</html>

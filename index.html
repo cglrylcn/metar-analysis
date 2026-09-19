@@ -430,6 +430,37 @@
     font-size: 1.4rem;
     line-height: 1;
   }
+  .met-dynamics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(56, 189, 248, 0.2);
+  }
+  .met-dyn-box {
+    background: var(--bg);
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--surface2);
+  }
+  .met-dyn-label {
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text2);
+    margin-bottom: 3px;
+  }
+  .met-dyn-val {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .met-dyn-sub {
+    font-size: 0.7rem;
+    color: var(--text2);
+    margin-top: 2px;
+  }
 </style>
 </head>
 <body>
@@ -536,6 +567,77 @@ function metarToDate(metar) {
   const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), t.day, t.hour, t.minute));
   if (d > new Date(now.getTime() + 2 * 86400000)) d.setUTCMonth(d.getUTCMonth() - 1);
   return d;
+}
+
+// ── QNH / Altimeter Parser (Madde 3) ──
+function parseMetarQnh(metar) {
+  const q = metar.match(/\bQ(\d{4})\b/);
+  if (q) return parseInt(q[1]);
+  const a = metar.match(/\bA(\d{4})\b/);
+  if (a) return Math.round(parseFloat(a[1]) * 0.338639);
+  return null;
+}
+
+// ── Temperature / Dewpoint Parser (Madde 4) ──
+function parseMetarTemp(metar) {
+  const m = metar.match(/\b(M?\d{2})\/(M?\d{2})\b/);
+  if (!m) return null;
+  const parseT = (s) => (s.startsWith('M') ? -parseInt(s.slice(1)) : parseInt(s));
+  const temp = parseT(m[1]);
+  const dew = parseT(m[2]);
+  return { temp, dew, spread: temp - dew };
+}
+
+// ── TAF Wind Parser at Target Hour (Madde 2) ──
+function parseTafWindAtHour(tafText, targetHour) {
+  if (!tafText) return null;
+  const raw = tafText.split('\n').map(l => l.trim()).filter(Boolean).join(' ');
+  
+  let baseWind = null;
+  const baseMatch = raw.match(/\b\d{4}\/\d{4}\s+(VRB|\d{3})(\d{2,3})(G(\d{2,3}))?KT\b/);
+  if (baseMatch) {
+    baseWind = {
+      dir: baseMatch[1] === 'VRB' ? null : parseInt(baseMatch[1]),
+      speed: parseInt(baseMatch[2]),
+      gust: baseMatch[4] ? parseInt(baseMatch[4]) : null,
+      vrb: baseMatch[1] === 'VRB',
+      source: 'TAF Ana Grubu'
+    };
+  }
+
+  // Check FM (From) groups e.g. FM200600 05012KT
+  const fmMatches = [...raw.matchAll(/\bFM(\d{2})(\d{2})(\d{2})\s+.*?(VRB|\d{3})(\d{2,3})(G(\d{2,3}))?KT\b/g)];
+  let matchedFm = null;
+  for (const fm of fmMatches) {
+    const fmHour = parseInt(fm[2]);
+    if (targetHour >= fmHour) {
+      matchedFm = {
+        dir: fm[4] === 'VRB' ? null : parseInt(fm[4]),
+        speed: parseInt(fm[5]),
+        gust: fm[7] ? parseInt(fm[7]) : null,
+        vrb: fm[4] === 'VRB',
+        source: `TAF FM${fm[2]}Z`
+      };
+    }
+  }
+
+  // Check BECMG (Becoming) groups e.g. BECMG 2008/2010 03010KT
+  const becmgMatches = [...raw.matchAll(/\bBECMG\s+(\d{2})(\d{2})\/(\d{2})(\d{2})\s+.*?(VRB|\d{3})(\d{2,3})(G(\d{2,3}))?KT\b/g)];
+  let matchedBecmg = null;
+  for (const b of becmgMatches) {
+    const startH = parseInt(b[2]);
+    if (targetHour >= startH) {
+      matchedBecmg = {
+        dir: b[5] === 'VRB' ? null : parseInt(b[5]),
+        speed: parseInt(b[6]),
+        gust: b[8] ? parseInt(b[8]) : null,
+        vrb: b[5] === 'VRB',
+        source: `TAF BECMG ${b[2]}-${b[4]}Z`
+      };
+    }
+  }
+
+  return matchedFm || matchedBecmg || baseWind;
 }
 
 function dirText(deg) {
@@ -1106,10 +1208,13 @@ async function analyze() {
       const wind = parseMetarWind(line);
       const time = parseMetarTime(line);
       const date = metarToDate(line);
+      const qnh = parseMetarQnh(line);
+      const tempData = parseMetarTemp(line);
       if (wind && time && date) {
         metars.push({
           raw: line, wind, utc: time, date,
           utcHour: time.hour, utcMin: time.minute,
+          qnh, tempData,
           daysAgo: Math.floor((Date.now() - date.getTime()) / 86400000)
         });
       }
@@ -1118,7 +1223,7 @@ async function analyze() {
 
     if (metars.length < 3) throw new Error('Yeterli METAR verisi bulunamadı (en az 3 rapor gerekli).');
 
-    // ── Prediction ──
+    // ── 1. Statistical Baseline (72h METAR) ──
     const matchingMetars = metars.filter(m => {
       const diff = Math.abs(m.utcHour - targetHour);
       return diff <= 1 || diff >= 23;
@@ -1142,24 +1247,143 @@ async function analyze() {
       if (m.wind.dir !== null) { dirs.push(m.wind.dir); dirWeights.push(finalW); }
     }
 
-    const predSpeed = Math.round(weightedSpeed / totalWeight);
-    const predDir = dirs.length > 0 ? weightedCircularMean(dirs, dirWeights) : null;
-    const predGust = gustCount > 0 ? Math.round(weightedGust / gustCount) : null;
-    const predVrb = dirs.length < sourceMetars.length * 0.4;
+    const statSpeed = Math.round(weightedSpeed / totalWeight);
+    const statDir = dirs.length > 0 ? weightedCircularMean(dirs, dirWeights) : null;
+    const statGust = gustCount > 0 ? Math.round(weightedGust / gustCount) : null;
+
+    // ── 2. Madde 2: TAF Entegrasyonu & Harmanlama ──
+    const tafWind = parseTafWindAtHour(tafLines.join('\n'), targetHour);
+    let blendedSpeed = statSpeed;
+    let blendedDir = statDir;
+    let blendedGust = statGust;
+    let blendedVrb = dirs.length < sourceMetars.length * 0.4;
+
+    if (tafWind) {
+      // Resmi terminal tahmini %60, 72s METAR klimatolojisi %40
+      blendedSpeed = Math.round(tafWind.speed * 0.6 + statSpeed * 0.4);
+      if (tafWind.vrb && dirs.length === 0) {
+        blendedVrb = true;
+        blendedDir = null;
+      } else if (tafWind.dir !== null && statDir !== null) {
+        blendedDir = weightedCircularMean([statDir, tafWind.dir], [0.4, 0.6]);
+        blendedVrb = false;
+      } else if (tafWind.dir !== null) {
+        blendedDir = tafWind.dir;
+        blendedVrb = false;
+      }
+      if (tafWind.gust || statGust) {
+        blendedGust = Math.max(tafWind.gust || 0, statGust || 0);
+      }
+    }
+
+    // ── 3. Madde 3: Barometrik Basınç Değişimi (QNH dP/dt) ──
+    const lastMetar = metars[metars.length - 1];
+    let dQnh = null;
+    let metar3hAgo = null;
+    if (lastMetar.qnh !== null) {
+      const targetTime3h = lastMetar.date.getTime() - (3 * 3600 * 1000);
+      let bestDiff = Infinity;
+      for (let i = 0; i < metars.length - 1; i++) {
+        const m = metars[i];
+        if (m.qnh !== null) {
+          const ageDiffHours = (lastMetar.date.getTime() - m.date.getTime()) / 3600000;
+          const dt = Math.abs(m.date.getTime() - targetTime3h);
+          if (ageDiffHours >= 1.8 && ageDiffHours <= 4.5 && dt < bestDiff) {
+            bestDiff = dt;
+            metar3hAgo = m;
+          }
+        }
+      }
+      if (metar3hAgo && metar3hAgo.qnh !== null) {
+        dQnh = lastMetar.qnh - metar3hAgo.qnh;
+      }
+    }
+
+    let qnhSpeedMod = 0;
+    let dQnhStatus = 'Dengeli';
+    let dQnhText = dQnh !== null ? `${dQnh > 0 ? '+' : ''}${dQnh} hPa / 3s` : 'Veri Yok';
+    let dQnhSub = 'Standart barometrik alan';
+    let dQnhColor = 'var(--text)';
+
+    if (dQnh !== null) {
+      if (dQnh <= -2.5) {
+        qnhSpeedMod = 2;
+        dQnhStatus = 'Hızlı Düşüş (Trof/Cephe)';
+        dQnhSub = 'Trof/cephe yaklaşımı: Rüzgar & gust potansiyeli yüksek';
+        dQnhColor = 'var(--red)';
+        if (!blendedGust && blendedSpeed >= 12) blendedGust = blendedSpeed + 7;
+        else if (blendedGust) blendedGust += 2;
+      } else if (dQnh <= -1.5) {
+        qnhSpeedMod = 1;
+        dQnhStatus = 'Düşüş Eğiliminde';
+        dQnhSub = 'Basınç gradyanı artıyor (+1kt takviye)';
+        dQnhColor = 'var(--yellow)';
+        if (!blendedGust && blendedSpeed >= 14) blendedGust = blendedSpeed + 5;
+      } else if (dQnh >= 2.0) {
+        qnhSpeedMod = -1;
+        dQnhStatus = 'Yükseliş (Antisiklon)';
+        dQnhSub = 'Yüksek basınç yerleşimi: Rüzgarda durulma eğilimi';
+        dQnhColor = 'var(--green)';
+      } else {
+        dQnhStatus = 'Stabil';
+        dQnhSub = 'Normal gradyan dengesi';
+        dQnhColor = 'var(--accent)';
+      }
+    }
+
+    // ── 4. Madde 4: Sıcaklık & Çiy Noktası (T - Td) Termal Karışım ──
+    const lastTemp = lastMetar.tempData;
+    let thermalSpeedMod = 0;
+    let thermalMixing = 'Normal';
+    let thermalEffectDesc = 'Standart sınır tabakası';
+    let thermalColor = 'var(--text)';
+
+    if (lastTemp) {
+      const isDaytime = targetHour >= 7 && targetHour <= 16;
+      if (isDaytime && lastTemp.spread >= 10) {
+        thermalSpeedMod = 1;
+        thermalMixing = `Kuvvetli Konvektif (${lastTemp.spread}°C)`;
+        thermalEffectDesc = 'Gündüz ısınması: Üst seviye momentum transferi (+1kt)';
+        thermalColor = 'var(--yellow)';
+      } else if (!isDaytime && lastTemp.spread <= 3) {
+        thermalSpeedMod = -1;
+        thermalMixing = `Yüzey İnversiyonu (${lastTemp.spread}°C)`;
+        thermalEffectDesc = 'Gece soğuması: Yüzey rüzgarında zayıflama (-1kt)';
+        thermalColor = 'var(--accent)';
+      } else {
+        thermalMixing = `Dengeli (${lastTemp.spread}°C yayılım)`;
+        thermalEffectDesc = 'Nötr termal tabakalaşma';
+        thermalColor = 'var(--text)';
+      }
+    }
+
+    // Nihai dinamik düzeltilmiş rüzgar değerleri
+    const predSpeed = Math.max(0, blendedSpeed + qnhSpeedMod + thermalSpeedMod);
+    const predDir = blendedDir;
+    const predGust = blendedGust;
+    const predVrb = blendedVrb;
 
     const matchSpeeds = matchingMetars.map(m => m.wind.speed);
     const minSpeed = matchSpeeds.length ? Math.min(...matchSpeeds) : Math.min(...allSpeeds);
     const maxSpeedRange = matchSpeeds.length ? Math.max(...matchSpeeds) : Math.max(...allSpeeds);
 
     let confidence = 50;
-    if (matchingMetars.length >= 5) confidence += 25;
-    else if (matchingMetars.length >= 3) confidence += 15;
-    else if (matchingMetars.length >= 2) confidence += 8;
+    if (matchingMetars.length >= 5) confidence += 20;
+    else if (matchingMetars.length >= 3) confidence += 12;
+    else if (matchingMetars.length >= 2) confidence += 6;
     if (metars.length >= 40) confidence += 10;
     else if (metars.length >= 20) confidence += 5;
+
+    // TAF tutarlılık bonusu / cezası
+    if (tafWind && statDir !== null && tafWind.dir !== null) {
+      const diffDeg = Math.min(Math.abs(statDir - tafWind.dir), 360 - Math.abs(statDir - tafWind.dir));
+      if (diffDeg <= 30) confidence += 10;
+      else if (diffDeg >= 70) confidence -= 10;
+    }
+
     const stdDev = matchSpeeds.length > 1 ? Math.sqrt(matchSpeeds.reduce((s, v) => s + (v - predSpeed) ** 2, 0) / matchSpeeds.length) : 5;
     if (stdDev < 2) confidence += 10;
-    else if (stdDev > 6) confidence -= 15;
+    else if (stdDev > 6) confidence -= 12;
     confidence = Math.min(95, Math.max(15, confidence));
 
     let trend = 'stable';
@@ -1173,10 +1397,10 @@ async function analyze() {
 
     // ── Render ──
     // Last METAR
-    const lastMetar = metars[metars.length - 1];
-    document.getElementById('lastMetarCard').innerHTML = `
+    const lastMetarCardHtml = `
       <h2>📡 Son METAR</h2>
       <div class="taf-raw">${lastMetar.raw}</div>`;
+    document.getElementById('lastMetarCard').innerHTML = lastMetarCardHtml;
 
     const dirDisplay = predVrb ? 'VRB' : `${predDir}°`;
     const dirLabel = predVrb ? 'Değişken' : dirTextLong(predDir);
@@ -1216,12 +1440,29 @@ async function analyze() {
         <span style="font-size:0.85rem;font-weight:600">${confidence}%</span>
         <span style="margin-left:8px">${windTag(predSpeed)}</span>
         <span style="margin-left:8px;font-size:0.85rem">${trendIcon} ${trendText}</span>
+      </div>
+      <div class="met-dynamics-grid">
+        <div class="met-dyn-box">
+          <div class="met-dyn-label">Barometrik Trend (QNH)</div>
+          <div class="met-dyn-val" style="color:${dQnhColor}">${dQnhText}</div>
+          <div class="met-dyn-sub">${dQnhSub}</div>
+        </div>
+        <div class="met-dyn-box">
+          <div class="met-dyn-label">Termal Karışım (T - Td)</div>
+          <div class="met-dyn-val" style="color:${thermalColor}">${thermalMixing}</div>
+          <div class="met-dyn-sub">${thermalEffectDesc}</div>
+        </div>
+        <div class="met-dyn-box">
+          <div class="met-dyn-label">Tahmin Modeli</div>
+          <div class="met-dyn-val" style="color:var(--accent)">${tafWind ? 'Hibrit TAF + METAR' : 'METAR İstatistiği'}</div>
+          <div class="met-dyn-sub">${tafWind ? tafWind.source : '72 saatlik ağırlıklı model'}</div>
+        </div>
       </div>`;
 
     // Commentary
     document.getElementById('commentaryCard').innerHTML = `
       <h2>💬 Yorum & Analiz</h2>
-      <div class="commentary">${buildCommentary(airport, utcStr, predSpeed, predDir, predGust, predVrb, trend, matchingMetars, metars, confidence, stdDev)}</div>`;
+      <div class="commentary">${buildCommentary(airport, utcStr, predSpeed, predDir, predGust, predVrb, trend, matchingMetars, metars, confidence, stdDev, tafWind, dQnh, lastTemp, thermalMixing)}</div>`;
 
     // TAF
     if (tafLines.length) {
@@ -1284,24 +1525,50 @@ async function analyze() {
   }
 }
 
-function buildCommentary(airport, utcStr, speed, dir, gust, vrb, trend, matching, all, confidence, stdDev) {
+function buildCommentary(airport, utcStr, speed, dir, gust, vrb, trend, matching, all, confidence, stdDev, tafWind, dQnh, lastTemp, thermalMixing) {
   const p = [];
-  p.push(`<strong>${airport}</strong> meydanı için <strong>${utcStr} UTC</strong> saatinde rüzgar tahmini, son <strong>72 saatlik ${all.length} adet METAR</strong> raporunun analizine dayanmaktadır.`);
+  p.push(`<strong>${airport}</strong> meydanı için <strong>${utcStr} UTC</strong> saatinde rüzgar tahmini, son <strong>72 saatlik ${all.length} adet METAR</strong> raporu${tafWind ? ' ve güncel TAF tahmini' : ''} baz alınarak hesaplanmıştır.`);
+
+  // Madde 2: TAF Açıklaması
+  if (tafWind) {
+    const tafDirStr = tafWind.vrb ? 'VRB' : `${String(tafWind.dir).padStart(3, '0')}°`;
+    p.push(`🧭 <strong>TAF Entegrasyonu:</strong> Meydan için yayınlanan <strong>${tafWind.source}</strong> grubu (${tafDirStr} / ${tafWind.speed} kt) %60 ağırlıkla modele katılmış; geçmiş 72 saatlik METAR paternleri %40 ağırlıkla harmanlanmıştır.`);
+  }
+
+  // Madde 3: Barometrik Değişim (QNH) Açıklaması
+  if (dQnh !== null) {
+    if (dQnh <= -2.0) {
+      p.push(`⚠️ <strong>Barometrik Düşüş (dP/dt):</strong> Son 3 saatte QNH basıncında <strong>${dQnh} hPa</strong> düşüş tespit edildi. Yaklaşan alçak basınç/cephe sistemi nedeniyle rüzgar hızı ve ani hamle (gust) potansiyeli yukarı yönlü revize edilmiştir.`);
+    } else if (dQnh <= -1.0) {
+      p.push(`📉 <strong>Barometrik Eğilim:</strong> Son 3 saatte QNH basıncında <strong>${dQnh} hPa</strong> gerileme mevcut; basınç gradyanında hafif artış gözlenmektedir.`);
+    } else if (dQnh >= 2.0) {
+      p.push(`📈 <strong>Barometrik Yükseliş:</strong> Son 3 saatte QNH basıncında <strong>+${dQnh} hPa</strong> artış kaydedildi. Antisiklonal stabilite yüzey rüzgarının durulmasını desteklemektedir.`);
+    }
+  }
+
+  // Madde 4: Sıcaklık / Çiy Noktası & Termal Karışım
+  if (lastTemp) {
+    if (lastTemp.spread >= 10) {
+      p.push(`☀️ <strong>Termal Karışım & Momentum:</strong> Sıcaklık-çiy noktası farkı (<strong>${lastTemp.spread}°C</strong>), kuru adiyabatik sınır tabakasında kuvvetli düşey karışım ve üst seviyelerden yüzeye momentum transferi oluşturmaktadır.`);
+    } else if (lastTemp.spread <= 3) {
+      p.push(`🌙 <strong>Yüzey İnversiyonu:</strong> Düşük sıcaklık-çiy farkı (<strong>${lastTemp.spread}°C</strong>) ve yüzey radyasyonel soğuması, yer seviyesinde rüzgarın sürtünmeyle kesilmesine (decoupling) işaret etmektedir.`);
+    }
+  }
 
   if (matching.length >= 3)
-    p.push(`Hedef saate yakın (±1 saat) <strong>${matching.length} adet gözlem</strong> bulundu — tahmin güvenilirliği yüksek.`);
+    p.push(`Hedef saate yakın (±1 saat) <strong>${matching.length} adet gözlem</strong> bulundu — zaman serisi eşleşmesi kuvvetli.`);
   else if (matching.length >= 1)
     p.push(`Hedef saate yakın <strong>${matching.length} adet gözlem</strong> bulundu; tüm veri seti ile desteklendi.`);
   else
-    p.push(`Hedef saate tam eşleşen gözlem bulunamadı; tahmin tüm veri setinin ağırlıklı ortalamasına dayanmaktadır.`);
+    p.push(`Hedef saate tam eşleşen gözlem bulunamadı; tahmin genel ağırlıklı modele dayanmaktadır.`);
 
-  if (speed <= 2) p.push(`<strong>Rüzgar neredeyse sakin</strong> olarak beklenmektedir. Termal aktivite henüz başlamamış veya gece inversiyonu devam ediyor olabilir.`);
+  if (speed <= 2) p.push(`<strong>Rüzgar neredeyse sakin</strong> olarak beklenmektedir.`);
   else if (speed <= 7) p.push(`<strong>Hafif esinti</strong> beklenmektedir. Operasyonel kısıtlama oluşturması beklenmez.`);
   else if (speed <= 15) p.push(`<strong>Orta şiddette rüzgar</strong> beklenmektedir. Hafif türbülans olasılığına dikkat.`);
   else if (speed <= 25) p.push(`<strong>Kuvvetli rüzgar</strong> beklenmektedir! Crosswind bileşeni kontrol edilmeli. Wind shear ve türbülans olasılığı vardır.`);
   else p.push(`<strong>⚠️ Şiddetli rüzgar koşulları!</strong> Operasyonel kısıtlamalar olabilir. Crosswind limitlerini kontrol edin.`);
 
-  if (vrb) p.push(`Rüzgar yönü <strong>değişken</strong> karakterdedir; belirgin hakim yön tespit edilememiştir.`);
+  if (vrb) p.push(`Rüzgar yönü <strong>değişken (VRB)</strong> karakterdedir.`);
   else if (dir !== null) p.push(`Hakim rüzgar yönü <strong>${dir}° (${dirTextLong(dir)})</strong> olarak belirlenmiştir.`);
 
   if (gust) p.push(`<strong>${gust} kt'a varan hamle (gust)</strong> olasılığı mevcuttur.`);
@@ -1311,15 +1578,15 @@ function buildCommentary(airport, utcStr, speed, dir, gust, vrb, trend, matching
   else p.push(`➡️ Bu saatteki rüzgar koşulları son 72 saatte <strong>tutarlı ve stabil</strong> seyretmiştir.`);
 
   if (stdDev < 2) p.push(`Veri tutarlılığı <strong>yüksek</strong> (σ = ${stdDev.toFixed(1)} kt).`);
-  else if (stdDev > 5) p.push(`⚠️ Veri tutarlılığı <strong>düşük</strong> (σ = ${stdDev.toFixed(1)} kt). Gerçek değer önemli ölçüde farklı olabilir.`);
+  else if (stdDev > 5) p.push(`⚠️ Veri tutarlılığı <strong>düşük</strong> (σ = ${stdDev.toFixed(1)} kt).`);
 
-  p.push(`<br><br>⚠️ <em>Bu tahmin istatistiksel analiz sonucudur. Resmi uçuş planlaması için güncellenmiş TAF/METAR kullanın.</em>`);
+  p.push(`<br><br>⚠️ <em>Bu tahmin istatistiksel ve dinamik analiz sonucudur. Resmi uçuş planlaması için yayınlanan güncel TAF/METAR bültenlerini esas alınız.</em>`);
   return p.join(' ');
 }
 
 function renderMetarTable(metars, targetHour) {
   let html = `<table class="metar-table"><thead><tr>
-    <th>Gün</th><th>UTC</th><th>Rüzgar Yönü</th><th>Hız</th><th>Gust</th><th>Değişken</th><th>Şiddet</th>
+    <th>Gün</th><th>UTC</th><th>Rüzgar Yönü</th><th>Hız</th><th>Gust</th><th>Sıcaklık / Çiy</th><th>QNH</th><th>Şiddet</th>
   </tr></thead><tbody>`;
   for (const m of [...metars].reverse()) {
     const diff = Math.abs(m.utcHour - targetHour);
@@ -1338,13 +1605,17 @@ function renderMetarTable(metars, targetHour) {
       </span>`;
     }
 
+    const tempCell = m.tempData ? `${m.tempData.temp}° / ${m.tempData.dew}°C <small style="color:var(--text2)">(${m.tempData.spread}°C)</small>` : '—';
+    const qnhCell = m.qnh ? `${m.qnh} hPa` : '—';
+
     html += `<tr class="${cls}">
       <td><span class="day-badge ${dayClass}">${dayLabel}</span></td>
       <td>${String(m.utcHour).padStart(2,'0')}:${String(m.utcMin).padStart(2,'0')}Z</td>
       <td>${dirCell}</td>
       <td><strong>${m.wind.speed} kt</strong></td>
       <td>${m.wind.gust ? m.wind.gust + ' kt' : '—'}</td>
-      <td>${m.wind.varMin !== null ? m.wind.varMin + '°V' + m.wind.varMax + '°' : '—'}</td>
+      <td>${tempCell}</td>
+      <td>${qnhCell}</td>
       <td>${windTag(m.wind.speed)}</td>
     </tr>`;
   }
